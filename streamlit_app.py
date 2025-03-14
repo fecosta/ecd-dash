@@ -1,91 +1,53 @@
 import os
 import pandas as pd
 import plotly.express as px
-import dash
-from dash import dcc, html, Input, Output, State, dash_table
+import streamlit as st
 
-try:
-    import micropip
-except ModuleNotFoundError:
-    raise ModuleNotFoundError("micropip module not found. Ensure you are running this in a compatible environment or install manually if necessary.")
-
-# Ensure the file exists by checking different possible locations
+# Ensure file exists
 file_path = "combined_health_nutrition_population_data_with_categories.xlsx"
 if not os.path.exists(file_path):
-    file_path = os.path.join(os.getcwd(), file_path)
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(
-            f"Data file not found at {file_path}. Please ensure the file is in the correct directory, or provide the correct path."
-        )
+    st.error(f"Data file not found at {file_path}. Please upload the correct file.")
+    st.stop()
 
-# Load the data with error handling
-try:
-    df = pd.read_excel(file_path)
-except Exception as e:
-    raise RuntimeError(f"Error loading the Excel file: {str(e)}")
+# Load data
+df = pd.read_excel(file_path).dropna(subset=["Country Name", "Series Name", "Year", "Value", "wealth_quintiles", "Category"])
+df["Year"] = df["Year"].astype(int)
+df["Value"] = pd.to_numeric(df["Value"])
 
-# Clean the data
-df_cleaned = df.dropna(subset=["Country Name", "Series Name", "Year", "Value", "wealth_quintiles", "Category"])
-df_cleaned["Year"] = df_cleaned["Year"].astype(int)
-df_cleaned["Value"] = pd.to_numeric(df_cleaned["Value"])
+# Streamlit UI
+st.title("Metrics by Wealth Quintiles")
 
-# Initialize Dash app
-app = dash.Dash(__name__)
+# Sidebar Filters
+country = st.selectbox("Select a Country", sorted(df["Country Name"].unique()))
+categories = st.multiselect("Select Categories", sorted(df["Category"].unique()), default=[df["Category"].unique()[0]])
+series = st.selectbox("Select Metric", sorted(df["Series Name"].unique()))
+year_range = st.slider("Select Year Range", int(df["Year"].min()), int(df["Year"].max()), (int(df["Year"].min()), int(df["Year"].max())))
+plot_type = st.radio("Select Plot Type", ["Line Plot", "Bar Plot", "Scatter Plot"])
+add_avg = st.checkbox("Add Black Dotted Average Line")
 
-# Layout
-def layout():
-    return html.Div([
-        html.H1("Metrics by Wealth Quintiles", className="custom-title"),
-        dcc.Tabs([
-            dcc.Tab(label="Visualization", children=[
-                html.Div([
-                    html.Label("Select a Country:"),
-                    dcc.Dropdown(
-                        id="country",
-                        options=[{"label": c, "value": c} for c in sorted(df_cleaned["Country Name"].unique())],
-                        value=sorted(df_cleaned["Country Name"].unique())[0] if not df_cleaned.empty else None,
-                        clearable=False
-                    ),
-                    html.Label("Select Categories:"),
-                    dcc.Checklist(
-                        id="category",
-                        options=[{"label": c, "value": c} for c in sorted(df_cleaned["Category"].unique())],
-                        value=[sorted(df_cleaned["Category"].unique())[0]] if not df_cleaned.empty else []
-                    ),
-                    html.Label("Metrics:"),
-                    dcc.RadioItems(id="series"),
-                    html.Label("Select Year Range:"),
-                    dcc.RangeSlider(
-                        id="year_range",
-                        min=df_cleaned["Year"].min() if not df_cleaned.empty else 2000,
-                        max=df_cleaned["Year"].max() if not df_cleaned.empty else 2025,
-                        value=[df_cleaned["Year"].min(), df_cleaned["Year"].max()] if not df_cleaned.empty else [2000, 2025],
-                        marks={year: str(year) for year in range(df_cleaned["Year"].min(), df_cleaned["Year"].max()+1, 5)} if not df_cleaned.empty else {}
-                    ),
-                    html.Label("Select Plot Type:"),
-                    dcc.RadioItems(
-                        id="plot_type",
-                        options=[{"label": p, "value": p} for p in ["Line Plot", "Bar Plot", "Scatter Plot"]],
-                        value="Line Plot"
-                    ),
-                    dcc.Checklist(
-                        id="add_avg_line", options=[{"label": "Add Black Dotted Average Line", "value": "avg"}], value=[]
-                    ),
-                    html.Button("Reset Filters", id="reset_filters", n_clicks=0)
-                ], style={"width": "25%", "display": "inline-block"}),
-                html.Div([
-                    dcc.Graph(id="plot")
-                ], style={"width": "70%", "display": "inline-block"})
-            ]),
-            dcc.Tab(label="Statistics", children=[
-                html.Button("Download CSV", id="download_button"),
-                dcc.Download(id="download_data"),
-                dash_table.DataTable(id="stats_table", page_size=10)
-            ])
-        ])
-    ])
+# Filter Data
+filtered_df = df[(df["Country Name"] == country) & (df["Category"].isin(categories)) & (df["Series Name"] == series) & (df["Year"].between(*year_range))]
 
-app.layout = layout()
+if filtered_df.empty:
+    st.warning("No data available for the selected filters.")
+else:
+    # Plot Data
+    if plot_type == "Line Plot":
+        fig = px.line(filtered_df, x="Year", y="Value", color="wealth_quintiles", title=f"{country} - {series}")
+    elif plot_type == "Bar Plot":
+        fig = px.bar(filtered_df, x="Year", y="Value", color="wealth_quintiles", title=f"{country} - {series}")
+    else:
+        fig = px.scatter(filtered_df, x="Year", y="Value", color="wealth_quintiles", title=f"{country} - {series}")
 
-if __name__ == "__main__":
-    app.run_server(debug=True)
+    if add_avg:
+        avg_df = filtered_df.groupby("Year")["Value"].mean().reset_index()
+        fig.add_scatter(x=avg_df["Year"], y=avg_df["Value"], mode="lines", name="Average", line=dict(dash="dot", color="black"))
+
+    st.plotly_chart(fig)
+
+# Show Data Table
+st.subheader("Statistics Table")
+st.dataframe(filtered_df)
+
+# CSV Download Button
+st.download_button("Download CSV", data=filtered_df.to_csv(index=False), file_name="filtered_data.csv", mime="text/csv")
