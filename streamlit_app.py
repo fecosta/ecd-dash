@@ -10,17 +10,10 @@ if not os.path.exists(file_path):
     st.stop()
 
 # Load data
-try:
-    df = pd.read_excel(file_path)
-    df = df.dropna(subset=["Country Name", "Series Name", "Year", "Value", "wealth_quintiles", "Category"])
-    df["Year"] = df["Year"].astype(int)
-    df["Value"] = pd.to_numeric(df["Value"], errors='coerce')
-    if df.empty:
-        st.error("The data file is empty or contains no valid data after filtering.")
-        st.stop()
-except Exception as e:
-    st.error(f"Error loading data: {str(e)}")
-    st.stop()
+df = pd.read_excel(file_path).dropna(subset=["Country Name", "Series Name", "Year", "Value", "wealth_quintiles", "Category"])
+df["Year"] = df["Year"].astype(int)
+df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
+df = df.dropna(subset=["Value"])  # Remove rows where "Value" couldn't be converted
 
 # Streamlit UI
 st.title("Metrics by Wealth Quintiles")
